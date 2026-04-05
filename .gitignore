@@ -1,0 +1,9 @@
+*.md
+openenv-course/
+sample_inference_script.py
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.gemini/
+.env
+data/

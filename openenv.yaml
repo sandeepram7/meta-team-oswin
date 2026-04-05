@@ -1,0 +1,16 @@
+version: "1.0"
+environment:
+  name: "DataCurationLab"
+  description: "An RL environment for multi-step data cleaning and preprocessing, graded by downstream model performance."
+  entrypoint: "environment:DataCurationEnv"
+tasks:
+  - id: "task_1_breast_cancer"
+    description: "Simple numeric imputation on Breast Cancer dataset with MCAR noise."
+  - id: "task_2_titanic"
+    description: "Mixed-type cleaning on Titanic dataset."
+  - id: "task_3_ames_housing"
+    description: "Correlated missingness in Ames Housing."
+  - id: "task_4_used_cars"
+    description: "Web-scraped data cleaning with severe outliers."
+  - id: "task_5_zomato"
+    description: "Everything-in-one challenge: Mixed formatting, high missingness, and complex structures."

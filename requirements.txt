@@ -1,0 +1,9 @@
+openenv-core
+pandas
+numpy
+scikit-learn
+tabulate
+fireducks
+uvicorn
+fastapi
+pydantic
