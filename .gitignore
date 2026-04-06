@@ -5,8 +5,6 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .gemini/
-.env
-data/
 meta_venv/
 venv_linux/
 *.txt
