@@ -6,7 +6,7 @@ except ImportError:
     import pandas as pd
 import numpy as np
 from typing import Tuple, Dict, Any
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.model_selection import cross_val_score
 from openenv.core.env_server import Environment
 from models import DataCleanAction, DataCleanObservation, DataCleanState
@@ -147,44 +147,53 @@ class DataCurationEnv(Environment):
 
     def _calculate_quality_score(self) -> float:
         """
-        Grader: Trains a proxy DecisionTreeClassifier to evaluate data quality.
-        The agent is rewarded based on the F1-score improvement.
+        Calculates the predictive quality of the current dataframe.
+        Auto-detects if it should use Regression (R2) or Classification (F1).
         """
-        if self._df.empty or len(self._df) < 20:
-            return 0.0 # Penalty for destroying/emptying the dataset
-            
         try:
-            # Separate features and target
-            # Assuming 'target' is the standardized column name from our fetcher
+            if self._df.empty or "target" not in self._df.columns:
+                return 0.0
+            
+            # 1. Feature Selection: Use only numeric columns, drop target
             X = self._df.drop(columns=["target"])
             y = self._df["target"]
             
-            # Select ONLY numeric columns for the baseline proxy model
-            # This ensures robustness even if the agent hasn't cleaned text yet
+            # Ensure target is numeric for regression tasks
+            if pd.api.types.is_object_dtype(y):
+                y = pd.to_numeric(y, errors='coerce')
+            
             X_numeric = X.select_dtypes(include=[np.number])
             
             if X_numeric.empty:
-                return 0.1 # Very low score if no numeric features are available
+                return 0.1 
             
-            # Fill NaNs with a simple baseline just so the model can train.
-            # The agent will get a HIGHER score if it cleans the data better!
-            X_numeric = X_numeric.fillna(X_numeric.mean().fillna(0))
+            # 2. Cleanup for Grader ONLY: Drop NaNs in target
+            mask = ~y.isna()
+            X_final = X_numeric[mask].copy()
+            y_final = y[mask].copy()
             
-            # Use a fast Decision Tree for 3-fold cross-validation
-            clf = DecisionTreeClassifier(max_depth=3, random_state=42)
+            if len(y_final) < 10:
+                return 0.0 # Not enough data after dropping NaNs
             
-            # Simple cross-validation to get the F1-score
-            # We don't use cross_val_score to avoid extra overhead during step()
-            clf.fit(X_numeric, y)
+            # Simple internal imputation for features to make it trainable
+            X_final = X_final.fillna(X_final.mean().fillna(0))
             
-            # For a really fast environment, we use a fixed evaluation set 
-            # but cross-validation is more robust for small samples (1000 rows)
-            scores = cross_val_score(clf, X_numeric, y, cv=3, scoring='f1_macro')
+            # 3. Detect Task Type: If target has high cardinality, it's Regression
+            unique_count = len(y_final.unique())
+            is_regression = pd.api.types.is_numeric_dtype(y_final) and unique_count > 10
             
-            return float(np.mean(scores))
+            if is_regression:
+                model = DecisionTreeRegressor(max_depth=3, random_state=42)
+                scores = cross_val_score(model, X_final, y_final, cv=3, scoring='r2')
+                final_score = max(0.001, float(np.mean(scores))) # Ensure baseline > 0
+            else:
+                model = DecisionTreeClassifier(max_depth=3, random_state=42)
+                scores = cross_val_score(model, X_final, y_final, cv=3, scoring='f1_macro')
+                final_score = max(0.001, float(np.mean(scores)))
             
-        except Exception as e:
-            # If the model fails to train, the data is currently too messy to use
+            return final_score
+
+        except Exception:
             return 0.0
 
     def _generate_mock_data(self, task_id: str) -> pd.DataFrame:

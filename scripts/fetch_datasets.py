@@ -44,7 +44,8 @@ def inject_noise(df, p=0.25):
     
     # 1. MCAR: Random NaNs
     for col in df_noisy.columns:
-        if pd.api.types.is_numeric_dtype(df_noisy[col]) and col != "target":
+        # Avoid targets and identification columns (useless for features)
+        if pd.api.types.is_numeric_dtype(df_noisy[col]) and col != "target" and "id" not in col.lower():
             mask = np.random.rand(len(df_noisy)) < p
             df_noisy.loc[mask, col] = np.nan
             

@@ -94,7 +94,7 @@ def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str],
     # 1. Simple Imputation for MCAR
     for col, m_type in miss_dict.items():
         if m_type == "MCAR" and not force_missing_forest:
-            if pd.api.types.is_numeric_dtype(df[col]):
+            if df[col].dtype in [np.number]:
                 df[col] = df[col].fillna(df[col].median())
             else:
                 df[col] = df[col].fillna(df[col].mode()[0] if not df[col].mode().empty else np.nan)
@@ -108,7 +108,7 @@ def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str],
     # Fill NaNs with median initially for features
     df_imputed = df.copy()
     for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]):
+        if df[col].dtype in [np.number]:
             df_imputed[col] = df_imputed[col].fillna(df_imputed[col].median())
         else:
             df_imputed[col] = df_imputed[col].fillna("missing")
@@ -127,7 +127,7 @@ def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str],
         X_train = X.loc[train_idx]
         X_test = X.loc[test_idx]
         
-        if pd.api.types.is_numeric_dtype(df[col]):
+        if df[col].dtype in [np.number]:
             model = RandomForestRegressor(n_estimators=n_trees, max_depth=5)
         else:
             model = RandomForestClassifier(n_estimators=n_trees, max_depth=5)

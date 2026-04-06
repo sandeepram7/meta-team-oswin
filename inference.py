@@ -9,7 +9,7 @@ from models import DataCleanAction
 
 # --- Configuration ---
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "llama3-70b-8192")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
 API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
 
 TASK_ID = os.getenv("TASK_ID", "task_1") # Matched to server default
@@ -34,15 +34,15 @@ SYSTEM_PROMPT = """
 You are a Senior Data Engineer cleaning a dataset step by step.
 Your goal is to maximize the downstream model's F1-score.
 
-STRATEGY (follow in order):
-1. READ the 'Missing Info' in your observation.
-2. Call 'identify_nan' on the column with the HIGEST missing %.
-3. Call 'classify_missingness' on that same column.
-4. Call 'impute_missing' on numeric columns (use strategy: 'mean', 'median', or 'mode').
-5. Call 'rm_outliers' on skewed columns.
-6. NEVER operate on the 'target' column.
+STRATEGY (MUST FOLLOW STRICTLY):
+1. READ 'Missing Info'. Find the column with the HIGHEST missing percentage.
+2. AVOID 'identify_nan'. It wastes steps. 
+3. IMMEDIATELY use 'impute_missing' OR 'rm_outliers' on that specific column to fix the data and RAISE THE SCORE.
+4. If an action gives a negative or 0.00 reward, you failed. IMMEDIATELY switch to a DIFFERENT action (e.g., if impute failed, try rm_outliers) or pick a DIFFERENT column.
+5. Never repeat a failed action.
+6. Your goal is to increase the score to > 0.75 within 5 steps.
 
-Available operations: 'identify_nan', 'classify_missingness', 'rm_outliers', 'impute_missing'.
+Available operations: 'classify_missingness', 'rm_outliers', 'impute_missing'
 """
 
 def get_agent_action(client: Optional[OpenAI], observation: str) -> DataCleanAction:
@@ -121,7 +121,7 @@ async def main():
                 final_score = (await env.state()).current_score
                 
                 log_step(step=step, action=f"{action.operation}({action.column})", 
-                         reward=reward, done=result.done, error=None)
+                         reward=reward, done=result.done, error=obs.message if "failed" in obs.message else None)
                 
                 if result.done:
                     success = final_score > 0.8 # Define a success threshold
