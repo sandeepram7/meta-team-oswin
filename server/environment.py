@@ -1,6 +1,9 @@
 import os
 import uuid
-import pandas as pd
+try:
+    import fireducks.pandas as pd
+except ImportError:
+    import pandas as pd
 import numpy as np
 from typing import Tuple, Dict, Any
 from sklearn.tree import DecisionTreeClassifier
@@ -15,6 +18,10 @@ class DataCurationEnv(Environment):
     The agent is rewarded based on how much its actions improve a downstream 
     Machine Learning model's performance.
     """
+    ACTION_CLASS = DataCleanAction
+    OBSERVATION_CLASS = DataCleanObservation
+    STATE_CLASS = DataCleanState
+    
     SUPPORTS_CONCURRENT_SESSIONS = True
     MAX_STEPS = 5
 
@@ -26,15 +33,20 @@ class DataCurationEnv(Environment):
         self._current_score = 0.0
         self._miss_dict = {}
 
-    def reset(self, seed=None, episode_id=None, task_id="task_1", **kwargs) -> DataCleanObservation:
+    def reset(self, seed=None, episode_id=None, **kwargs) -> DataCleanObservation:
         """
         Starts a new episode with a messy dataset.
         """
+        task_id = kwargs.get("task_id", "task_1")
         # 1. Load Dataset (Mocking Task 1 if file not found)
         data_path = f"data/{task_id}_sampled.csv"
         if os.path.exists(data_path):
             self._df = pd.read_csv(data_path)
+            # Ensure 'target' column exists as standardized by fetch_datasets.py
+            if "target" not in self._df.columns:
+                self._df["target"] = 0 # Fallback
         else:
+            # Fallback to mock data if script wasn't run
             self._df = self._generate_mock_data(task_id)
         
         self._target_col = "target"
@@ -135,32 +147,44 @@ class DataCurationEnv(Environment):
 
     def _calculate_quality_score(self) -> float:
         """
-        Grader: Calculates a 0.0 to 1.0 score based on downstream model performance.
-        Trains a fast Decision Tree classifier and returns macro-F1 score.
+        Grader: Trains a proxy DecisionTreeClassifier to evaluate data quality.
+        The agent is rewarded based on the F1-score improvement.
         """
-        if self._df.empty or len(self._df) < 50:
-            return 0.0
+        if self._df.empty or len(self._df) < 20:
+            return 0.0 # Penalty for destroying/emptying the dataset
             
         try:
-            # We need a numeric-only df for the proxy model
-            X = self._df.drop(columns=[self._target_col])
-            y = self._df[self._target_col]
+            # Separate features and target
+            # Assuming 'target' is the standardized column name from our fetcher
+            X = self._df.drop(columns=["target"])
+            y = self._df["target"]
             
-            # Simple encoding for categories
-            # If NaNs remain, skip the model and return low score
-            if self._df.isna().any().any():
-                # Penalize but allow a low score based on completion rate
-                completeness = 1.0 - self._df.isna().mean().mean()
-                return completeness * 0.4 # Max 0.4 if NaNs exist
+            # Select ONLY numeric columns for the baseline proxy model
+            # This ensures robustness even if the agent hasn't cleaned text yet
+            X_numeric = X.select_dtypes(include=[np.number])
             
-            # Prepare numeric features
-            X_numeric = pd.get_dummies(X)
+            if X_numeric.empty:
+                return 0.1 # Very low score if no numeric features are available
             
-            clf = DecisionTreeClassifier(max_depth=5, random_state=42)
+            # Fill NaNs with a simple baseline just so the model can train.
+            # The agent will get a HIGHER score if it cleans the data better!
+            X_numeric = X_numeric.fillna(X_numeric.mean().fillna(0))
+            
+            # Use a fast Decision Tree for 3-fold cross-validation
+            clf = DecisionTreeClassifier(max_depth=3, random_state=42)
+            
+            # Simple cross-validation to get the F1-score
+            # We don't use cross_val_score to avoid extra overhead during step()
+            clf.fit(X_numeric, y)
+            
+            # For a really fast environment, we use a fixed evaluation set 
+            # but cross-validation is more robust for small samples (1000 rows)
             scores = cross_val_score(clf, X_numeric, y, cv=3, scoring='f1_macro')
+            
             return float(np.mean(scores))
             
-        except Exception:
+        except Exception as e:
+            # If the model fails to train, the data is currently too messy to use
             return 0.0
 
     def _generate_mock_data(self, task_id: str) -> pd.DataFrame:

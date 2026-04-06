@@ -8,3 +8,5 @@ __pycache__/
 .env
 data/
 meta_venv/
+venv_linux/
+*.txt

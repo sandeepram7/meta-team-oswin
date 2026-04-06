@@ -1,4 +1,7 @@
-import pandas as pd
+try:
+    import fireducks.pandas as pd
+except ImportError:
+    import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from typing import Dict, List, Optional, Union

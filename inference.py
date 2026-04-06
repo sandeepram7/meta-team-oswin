@@ -8,12 +8,13 @@ from client import DataCurationEnvClient
 from models import DataCleanAction
 
 # --- Configuration ---
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama3-70b-8192")
+API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-TASK_ID = os.getenv("TASK_ID", "task_1_breast_cancer")
+TASK_ID = os.getenv("TASK_ID", "task_1") # Matched to server default
 MAX_STEPS = 5
+MOCK_MODE = os.getenv("MOCK", "false").lower() == "true"
 
 # --- Logging Helpers ---
 def log_start(task: str, env: str, model: str) -> None:
@@ -30,16 +31,27 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
 
 # --- Agent Prompting ---
 SYSTEM_PROMPT = """
-You are a Senior Data Engineer. You receive statistics about a messy dataset and must choose ONE cleaning operation at a time to improve the data quality.
-Your goal is to increase the downstream model's F1-score.
+You are a Senior Data Engineer cleaning a dataset step by step.
+Your goal is to maximize the downstream model's F1-score.
+
+STRATEGY (follow in order):
+1. READ the 'Missing Info' in your observation.
+2. Call 'identify_nan' on the column with the HIGEST missing %.
+3. Call 'classify_missingness' on that same column.
+4. Call 'impute_missing' on numeric columns (use strategy: 'mean', 'median', or 'mode').
+5. Call 'rm_outliers' on skewed columns.
+6. NEVER operate on the 'target' column.
+
 Available operations: 'identify_nan', 'classify_missingness', 'rm_outliers', 'impute_missing'.
-Always specify the column you are working on.
 """
 
-def get_agent_action(client: OpenAI, observation: str) -> DataCleanAction:
+def get_agent_action(client: Optional[OpenAI], observation: str) -> DataCleanAction:
     """
-    Calls the LLM to decide the next cleaning action.
+    Calls the LLM to decide the next cleaning action, or returns a mock action.
     """
+    if MOCK_MODE:
+        return DataCleanAction(operation="identify_nan", column="target", params={})
+
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -61,14 +73,18 @@ def get_agent_action(client: OpenAI, observation: str) -> DataCleanAction:
         args = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
         return DataCleanAction(**args)
     except Exception as e:
-        # Fallback action
-        return DataCleanAction(operation="identify_nan", column="target", params={})
+        # Diagnostic print
+        print(f"[LLM ERROR] {type(e).__name__}: {e}")
+        # Better fallback: try to impute a known column instead of target
+        return DataCleanAction(operation="identify_nan", column="Age" if "Age" in observation else "price", params={})
 
 async def main():
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = None
+    if not MOCK_MODE:
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     
     # Connect to the environment (assuming it's running locally for the baseline)
-    async with DataCurationEnvClient(base_url="http://localhost:8000").async_iterator() as env:
+    async with DataCurationEnvClient(base_url="http://localhost:8000") as env:
         log_start(task=TASK_ID, env="DataCurationLab", model=MODEL_NAME)
         
         rewards = []
