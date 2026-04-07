@@ -9,7 +9,7 @@ from typing import Tuple, Dict, Any
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.model_selection import cross_val_score
 from openenv.core.env_server import Environment
-from models import DataCleanAction, DataCleanObservation, DataCleanState
+from .models import DataCleanAction, DataCleanObservation, DataCleanState
 from . import preprocessing
 
 class DataCurationEnv(Environment):

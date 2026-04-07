@@ -5,7 +5,7 @@ import textwrap
 from typing import List, Optional
 from openai import OpenAI
 from client import DataCurationEnvClient
-from models import DataCleanAction
+from server.models import DataCleanAction
 
 # --- Configuration ---
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
