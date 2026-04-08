@@ -1,7 +1,7 @@
 from typing import Dict, Any
 from openenv.core.env_client import EnvClient
 from openenv.core.client_types import StepResult
-from models import DataCleanAction, DataCleanObservation, DataCleanState
+from server.models import DataCleanAction, DataCleanObservation, DataCleanState
 
 class DataCurationEnvClient(EnvClient[DataCleanAction, DataCleanObservation, DataCleanState]):
     def _step_payload(self, action: DataCleanAction) -> dict:

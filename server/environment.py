@@ -6,8 +6,14 @@ except ImportError:
     import pandas as pd
 import numpy as np
 from typing import Tuple, Dict, Any
+
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OrdinalEncoder
+
 from openenv.core.env_server import Environment
 from .models import DataCleanAction, DataCleanObservation, DataCleanState
 from . import preprocessing
@@ -23,7 +29,7 @@ class DataCurationEnv(Environment):
     STATE_CLASS = DataCleanState
     
     SUPPORTS_CONCURRENT_SESSIONS = True
-    MAX_STEPS = 5
+    MAX_STEPS = 6  
 
     def __init__(self):
         self._state = None
@@ -34,29 +40,22 @@ class DataCurationEnv(Environment):
         self._miss_dict = {}
 
     def reset(self, seed=None, episode_id=None, **kwargs) -> DataCleanObservation:
-        """
-        Starts a new episode with a messy dataset.
-        """
         task_id = kwargs.get("task_id", "task_1")
-        # 1. Load Dataset (Mocking Task 1 if file not found)
         data_path = f"data/{task_id}_sampled.csv"
+        
         if os.path.exists(data_path):
             self._df = pd.read_csv(data_path)
-            # Ensure 'target' column exists as standardized by fetch_datasets.py
             if "target" not in self._df.columns:
-                self._df["target"] = 0 # Fallback
+                self._df["target"] = 0 
         else:
-            # Fallback to mock data if script wasn't run
             self._df = self._generate_mock_data(task_id)
         
         self._target_col = "target"
         self._miss_dict = {}
         
-        # 2. Calculate Initial Baseline Score
         self._initial_score = self._calculate_quality_score()
         self._current_score = self._initial_score
         
-        # 3. Setup State
         self._state = DataCleanState(
             episode_id=episode_id or str(uuid.uuid4()),
             step_count=0,
@@ -66,36 +65,45 @@ class DataCurationEnv(Environment):
             current_score=self._current_score
         )
         
-        return self._get_obs(f"Dataset '{task_id}' loaded. Goal: Improve model F1-score.")
+        return self._get_obs(f"Dataset '{task_id}' loaded. Goal: Improve model F1-score/R2.")
 
     def step(self, action: DataCleanAction, timeout_s=None, **kwargs) -> DataCleanObservation:
-        """
-        Executes one cleaning operation and returns the observation and reward.
-        """
         self._state.step_count += 1
-        op = action.operation.lower()
+        
+        op = action.operation.lower().strip()
         col = action.column
         feedback = ""
         
+        # --- STATE BACKUP ---
+        # Save a copy of the dataframe before we try to manipulate it
+        prev_df = self._df.copy()
+        prev_miss_dict = self._miss_dict.copy()
+        prev_score = self._current_score
+        # --------------------
+        
         try:
-            # --- Apply Preprocessing logic ---
-            if op == "identify_nan":
+            if op == "finish":
+                feedback = "Agent successfully finished the pipeline."
+                
+            elif op == "identify_nan":
                 self._df = preprocessing.identify_NaN(self._df)
-                feedback = f"Standardized dtypes and masked invalid values."
+                feedback = "[SUCCESS] Stage 1 complete. MUST move to Stage 2: drop_useless_columns."
             
-            elif op == "classify_missingness":
-                self._miss_dict = preprocessing.classify_missingness(self._df)
-                feedback = f"Classified missingness: {self._miss_dict}"
-            
+            elif op == "drop_useless_columns":
+                threshold = action.params.get("threshold", 50.0) if action.params else 50.0
+                cols_before = set(self._df.columns)
+                self._df = preprocessing.drop_useless_columns(self._df, threshold=float(threshold))
+                dropped = cols_before - set(self._df.columns)
+                feedback = f"[SUCCESS] Stage 2 complete. Dropped {len(dropped)} columns. MUST move to Stage 3: rm_outliers."
+                
             elif op == "rm_outliers":
                 alpha = action.params.get("alpha", 0.05) if action.params else 0.05
-                self._df = preprocessing.rm_outlier_univar(self._df, alpha=alpha)
-                feedback = f"Removed outliers from all numeric columns (alpha={alpha})."
-            
+                self._df = preprocessing.rm_outlier_univar(self._df, alpha=float(alpha))
+                feedback = "[SUCCESS] Stage 3 complete. MUST move to Stage 4: impute_missing."
+                
             elif op == "impute_missing":
                 if not self._miss_dict:
                     self._miss_dict = preprocessing.classify_missingness(self._df)
-                
                 params = action.params if action.params else {}
                 self._df = preprocessing.impute_mcar_mar(
                     self._df, 
@@ -104,24 +112,41 @@ class DataCurationEnv(Environment):
                     nn_window=params.get("nn_window", None),
                     force_missing_forest=params.get("force_missing_forest", False)
                 )
-                feedback = f"Applied hybrid imputation strategy."
+                feedback = "[SUCCESS] Stage 4 complete. Data is imputed. MUST move to Stage 5: encode_categoricals."
+
+            elif op == "encode_categoricals":
+                self._df = preprocessing.encode_categoricals(self._df)
+                feedback = "[SUCCESS] Stage 5 complete. Strings encoded. MUST move to Stage 6: finish."
             
             else:
                 feedback = f"Unknown operation '{op}'. No changes made."
 
         except Exception as e:
-            feedback = f"Action failed: {str(e)}"
-            return self._get_obs(feedback, reward=-0.1)
+            # If the code crashes (like the PyArrow error), revert the dataset!
+            self._df = prev_df
+            self._miss_dict = prev_miss_dict
+            feedback = f"Action crashed: {str(e)}. [REVERTED] Dataset restored to previous safe state. MUST move to next stage."
+            return self._get_obs(feedback, reward=0.0)
 
-        # --- Calculate Reward ---
+        # --- REWARD & REVERT LOGIC ---
         new_score = self._calculate_quality_score()
-        reward = new_score - self._current_score # Delta improvement
+        actual_delta = new_score - self._current_score 
+        
+        if actual_delta < 0:
+            # The action degraded the score! Revert it immediately.
+            self._df = prev_df
+            self._miss_dict = prev_miss_dict
+            new_score = prev_score
+            reward = 0.0 # Only sum positive rewards
+            feedback += f" [REVERTED] Action degraded model by {actual_delta:.3f}. Dataset restored to previous safe state. MUST move to next stage."
+        else:
+            # Action was neutral or positive. Keep it!
+            reward = actual_delta
+
         self._current_score = new_score
         self._state.current_score = new_score
         
-        # --- Check Done Conditions ---
-        # Done if we hit max steps or score is very high
-        done = self._state.step_count >= self.MAX_STEPS or self._current_score > 0.95
+        done = self._state.step_count >= self.MAX_STEPS or self._current_score > 0.95 or op == "finish"
         
         return self._get_obs(feedback, reward=reward, done=done)
 
@@ -130,81 +155,80 @@ class DataCurationEnv(Environment):
         return self._state
 
     def _get_obs(self, message: str, reward: float = 0.0, done: bool = False) -> DataCleanObservation:
-        """
-        Generates the observation from the current DataFrame.
-        """
-        missing = (self._df.isna().mean() * 100).to_dict()
+        missing = (self._df.isna().mean() * 100).fillna(0.0).to_dict()
         dtypes = {col: str(dtype) for col, dtype in self._df.dtypes.items()}
         
         return DataCleanObservation(
             done=done,
             reward=reward,
-            df_head=self._df.head(5).to_markdown(),
+            df_head=self._df.head(3).to_markdown() if not self._df.empty else "Empty DataFrame",
             missing_info=missing,
             dtype_info=dtypes,
             message=message
         )
 
     def _calculate_quality_score(self) -> float:
-        """
-        Calculates the predictive quality of the current dataframe.
-        Auto-detects if it should use Regression (R2) or Classification (F1).
-        """
         try:
             if self._df.empty or "target" not in self._df.columns:
                 return 0.0
             
-            # 1. Feature Selection: Use only numeric columns, drop target
             X = self._df.drop(columns=["target"])
             y = self._df["target"]
             
-            # Ensure target is numeric for regression tasks
-            if pd.api.types.is_object_dtype(y):
-                y = pd.to_numeric(y, errors='coerce')
-            
-            X_numeric = X.select_dtypes(include=[np.number])
-            
-            if X_numeric.empty:
-                return 0.1 
-            
-            # 2. Cleanup for Grader ONLY: Drop NaNs in target
             mask = ~y.isna()
-            X_final = X_numeric[mask].copy()
+            X_final = X[mask].copy()
             y_final = y[mask].copy()
             
-            if len(y_final) < 10:
-                return 0.0 # Not enough data after dropping NaNs
+            if len(y_final) < 10 or X_final.empty:
+                return 0.0 
             
-            # Simple internal imputation for features to make it trainable
-            X_final = X_final.fillna(X_final.mean().fillna(0))
+            if y_final.dtype == 'object' or str(y_final.dtype) == 'category':
+                is_regression = False
+            else:
+                unique_count = len(y_final.unique())
+                is_regression = unique_count > 10
             
-            # 3. Detect Task Type: If target has high cardinality, it's Regression
-            unique_count = len(y_final.unique())
-            is_regression = pd.api.types.is_numeric_dtype(y_final) and unique_count > 10
+            numeric_cols = X_final.select_dtypes(include=['int64', 'float64']).columns.tolist()
+            categorical_cols = X_final.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
+            
+            numeric_transformer = SimpleImputer(strategy='mean')
+            
+            categorical_transformer = Pipeline(steps=[
+                ('imputer', SimpleImputer(strategy='most_frequent')),
+                ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
+            ])
+            
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ('num', numeric_transformer, numeric_cols),
+                    ('cat', categorical_transformer, categorical_cols)
+                ], remainder='drop')
             
             if is_regression:
-                model = DecisionTreeRegressor(max_depth=3, random_state=42)
-                scores = cross_val_score(model, X_final, y_final, cv=3, scoring='r2')
-                final_score = max(0.001, float(np.mean(scores))) # Ensure baseline > 0
+                clf = Pipeline(steps=[
+                    ('preprocessor', preprocessor),
+                    ('classifier', DecisionTreeRegressor(max_depth=5, random_state=42))
+                ])
+                scores = cross_val_score(clf, X_final, y_final, cv=3, scoring='r2')
+                final_score = max(0.001, min(float(np.mean(scores)), 1.0))
             else:
-                model = DecisionTreeClassifier(max_depth=3, random_state=42)
-                scores = cross_val_score(model, X_final, y_final, cv=3, scoring='f1_macro')
-                final_score = max(0.001, float(np.mean(scores)))
+                clf = Pipeline(steps=[
+                    ('preprocessor', preprocessor),
+                    ('classifier', DecisionTreeClassifier(max_depth=5, random_state=42))
+                ])
+                scores = cross_val_score(clf, X_final, y_final, cv=3, scoring='f1_macro')
+                final_score = max(0.001, min(float(np.mean(scores)), 1.0))
             
             return final_score
 
-        except Exception:
+        except Exception as e:
             return 0.0
 
     def _generate_mock_data(self, task_id: str) -> pd.DataFrame:
-        """
-        Generates synthetic data for testing when CSV files are missing.
-        """
         np.random.seed(42)
         n_rows = 500
         
         if "breast_cancer" in task_id or "task_1" in task_id:
-            # Mock Task 1 (Mostly numeric, MCAR noise)
             data = {
                 "radius": np.random.normal(15, 3, n_rows),
                 "texture": np.random.normal(20, 5, n_rows),
@@ -212,13 +236,11 @@ class DataCurationEnv(Environment):
                 "target": np.random.randint(0, 2, n_rows)
             }
             df = pd.DataFrame(data)
-            # Inject noise
             for col in ["radius", "texture"]:
                 mask = np.random.random(n_rows) < 0.1
                 df.loc[mask, col] = np.nan
             return df
         else:
-            # Default mock
             df = pd.DataFrame(np.random.randn(n_rows, 4), columns=['a', 'b', 'c', 'target'])
             df['target'] = (df['target'] > 0).astype(int)
             return df

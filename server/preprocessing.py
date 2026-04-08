@@ -1,97 +1,158 @@
+import os
+import json
+import numpy as np
 try:
     import fireducks.pandas as pd
 except ImportError:
     import pandas as pd
-import numpy as np
+
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
 from typing import Dict, List, Optional, Union
 
 def identify_NaN(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Standardize dtypes and mask invalid data as NaNs.
-    Attempts to infer numeric types for string columns that look like numbers.
-    """
     df = df.copy()
+    # Aggressively catch common placeholder strings and make them actual NaNs
+    df = df.replace(["", " ", "NaN", "nan", "NA", "N/A", "null", "?", "-", "None"], np.nan)
+    
     for col in df.columns:
-        # Try to convert to numeric, turning errors to NaN
         if df[col].dtype == 'object':
             try:
                 converted = pd.to_numeric(df[col], errors='coerce')
-                # If we got more than 50% numbers, keep the conversion
                 if converted.notna().mean() > 0.5:
                     df[col] = converted
             except:
                 pass
     return df
 
+def drop_useless_columns(df: pd.DataFrame, threshold: float = 50.0) -> pd.DataFrame:
+    df = df.copy()
+    missing_percentages = df.isna().mean() * 100
+    
+    cols_to_drop = missing_percentages[missing_percentages > threshold].index.tolist()
+    if "target" in cols_to_drop:
+        cols_to_drop.remove("target")
+        
+    if cols_to_drop:
+        df = df.drop(columns=cols_to_drop)
+    return df
+
+def _llm_clean_categories(unique_vals: List[str]) -> Dict[str, str]:
+    try:
+        from openai import OpenAI
+        api_key = os.getenv("OPENAI_API_KEY")
+        model_name = os.getenv("MODEL_NAME", "gpt-4o-mini")
+        
+        if not api_key: return {}
+        client = OpenAI(api_key=api_key)
+        
+        system_prompt = """You are a strict data cleaning assistant. 
+        I will give you a list of unique categorical values. Identify duplicates caused by typos, whitespace, casing, or delimiters.
+        Standardize them into clean, unified labels.
+        Respond strictly with a valid JSON object where the key is the EXACT original string and the value is the standardized string.
+        Example output: {"New York ": "New York", "new-york": "New York", "NY": "New York"}"""
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(unique_vals)}
+            ],
+            response_format={ "type": "json_object" },
+            temperature=0.0
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        return {}
+
+def encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans messy strings using an LLM, then applies One-Hot Encoding (<5 unique) 
+    or Label Encoding (>=5 unique). Safely preserves NaNs for downstream imputation.
+    """
+    df = df.copy()
+    cat_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
+    
+    if "target" in cat_cols: 
+        cat_cols.remove("target") 
+
+    for col in cat_cols:
+        unique_vals = df[col].dropna().unique().tolist()
+        unique_vals = [str(v) for v in unique_vals]
+        
+        # Semantic Cleanup using LLM
+        if 1 < len(unique_vals) <= 60:
+             mapping = _llm_clean_categories(unique_vals)
+             if mapping:
+                 df[col] = df[col].replace(mapping)
+        else:
+             df[col] = df[col].apply(lambda x: str(x).strip().title() if pd.notna(x) and isinstance(x, str) else x)
+
+        num_unique = df[col].nunique()
+        mask = df[col].notna() # Track where the valid data is
+
+        # Apply Correct Encoding
+        if num_unique < 5:
+            # One-Hot Encode (dtype=float prevents bool/int crashes in FireDucks)
+            dummies = pd.get_dummies(df[[col]], columns=[col], dtype=float)
+            
+            # CRITICAL FIX: Restore NaNs so the imputer can find them!
+            if not mask.all(): 
+                dummies.loc[~mask, :] = np.nan
+                
+            # Swap old column for new dummy columns
+            df = pd.concat([df.drop(columns=[col]), dummies], axis=1)
+        else:
+            # Label Encode
+            le = LabelEncoder()
+            new_col = pd.Series(np.nan, index=df.index, dtype=float)
+            
+            if mask.any():
+                new_col[mask] = le.fit_transform(df.loc[mask, col].astype(str))
+            
+            df[col] = new_col
+            
+    return df
+
 def classify_missingness(df: pd.DataFrame) -> Dict[str, str]:
-    """
-    Classify missingness for each column as MCAR, MAR, or MNAR.
-    Simplified version using correlation thresholds.
-    """
     missing_cols = df.columns[df.isna().any()].tolist()
     classifications = {}
-    
-    if not missing_cols:
-        return classifications
+    if not missing_cols: return classifications
 
-    # Create indicator for missingness
     is_missing = df.isna()
-    
     for col in missing_cols:
-        # Check correlation of missingness in 'col' with values in other columns
         corrs = []
         for other_col in df.columns:
             if other_col == col: continue
             if df[other_col].dtype in ['float64', 'int64']:
-                # Point-biserial correlation approximation
-                # Correlation between is_missing[col] and df[other_col]
                 corr = is_missing[col].corr(df[other_col])
-                corrs.append(abs(corr))
-        
-        avg_corr = np.mean(corrs) if corrs else 0
-        
-        if avg_corr > 0.1:
-            classifications[col] = "MAR" # Missing At Random (depends on other data)
-        elif avg_corr < 0.05:
-            classifications[col] = "MCAR" # Missing Completely At Random
-        else:
-            classifications[col] = "MNAR" # Missing Not At Random
-            
+                if not np.isnan(corr):
+                    corrs.append(abs(corr))
+        avg_corr = np.nanmean(corrs) if corrs else 0.0
+        if avg_corr > 0.1: classifications[col] = "MAR" 
+        elif avg_corr < 0.05: classifications[col] = "MCAR" 
+        else: classifications[col] = "MNAR" 
     return classifications
 
 def rm_outlier_univar(df: pd.DataFrame, alpha: float = 0.05, tail: str = "both", ind_col: List[str] = []) -> pd.DataFrame:
-    """
-    Remove univariate outliers using percentile trimming.
-    """
     df = df.copy()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     for col in numeric_cols:
-        if col in ind_col: continue # Skip ignored columns
-        
+        if col in ind_col or col == "target": continue 
         lower_q = df[col].quantile(alpha / 2 if tail == "both" else 0)
         upper_q = df[col].quantile(1 - alpha / 2 if tail == "both" else 1 - alpha)
         
         if tail == "both" or tail == "lower":
-            df = df[df[col] >= lower_q]
+            df.loc[df[col] < lower_q, col] = np.nan
         if tail == "both" or tail == "upper":
-            df = df[df[col] <= upper_q]
-            
+            df.loc[df[col] > upper_q, col] = np.nan
     return df
 
 def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str], 
-                    random_impute: bool = False, 
-                    nn_window: Optional[int] = None, 
-                    force_missing_forest: bool = False,
-                    n_trees: int = 10, tune: bool = False) -> pd.DataFrame:
-    """
-    Hybrid imputation strategy.
-    MCAR -> Simple Median/Mode.
-    MAR -> Iterative Random Forest (MissingForest).
-    """
+                    random_impute: bool = False, nn_window: Optional[int] = None, 
+                    force_missing_forest: bool = False, n_trees: int = 10, tune: bool = False) -> pd.DataFrame:
     df = df.copy()
     
-    # 1. Simple Imputation for MCAR
     for col, m_type in miss_dict.items():
         if m_type == "MCAR" and not force_missing_forest:
             if pd.api.types.is_numeric_dtype(df[col]):
@@ -99,13 +160,9 @@ def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str],
             else:
                 df[col] = df[col].fillna(df[col].mode()[0] if not df[col].mode().empty else np.nan)
                 
-    # 2. Iterative Imputation for Remaining (MAR/MNAR)
-    # Simple MissingForest implementation
     remaining_missing = df.columns[df.isna().any()].tolist()
-    if not remaining_missing:
-        return df
+    if not remaining_missing: return df
 
-    # Fill NaNs with median initially for features
     df_imputed = df.copy()
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
@@ -114,16 +171,19 @@ def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str],
             df_imputed[col] = df_imputed[col].fillna("missing")
 
     for col in remaining_missing:
-        # Prepare training data: rows where 'col' is not NaN
         train_idx = df[col].notna()
         test_idx = df[col].isna()
         
-        if not test_idx.any(): continue
+        if not test_idx.any() or not train_idx.any(): continue
         
         X = df_imputed.drop(columns=[col])
-        X = pd.get_dummies(X) # Simple encoding
-        
+        X = pd.get_dummies(X) 
         y = df.loc[train_idx, col]
+        
+        if len(y.unique()) == 1:
+            df.loc[test_idx, col] = y.iloc[0]
+            continue
+            
         X_train = X.loc[train_idx]
         X_test = X.loc[test_idx]
         
@@ -133,7 +193,6 @@ def impute_mcar_mar(df: pd.DataFrame, miss_dict: Dict[str, str],
             model = RandomForestClassifier(n_estimators=n_trees, max_depth=5)
             
         model.fit(X_train, y)
-        df_updated_vals = model.predict(X_test)
-        df.loc[test_idx, col] = df_updated_vals
+        df.loc[test_idx, col] = model.predict(X_test)
         
     return df

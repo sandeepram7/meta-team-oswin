@@ -1,10 +1,20 @@
 #!/bin/bash
 
-# Ensure your key is set (it should be if you've been running inference)
-if [ -z "$GROQ_API_KEY" ]; then
-    echo "ERROR: Please export your GROQ_API_KEY first!"
+# 1. Safely load .env variables
+if [ -f .env ]; then
+    echo "Loading variables from .env file..."
+    set -a
+    source .env
+    set +a
+fi
+
+# 2. Ensure your key is set
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "ERROR: Please export your OPENAI_API_KEY first or add it to your .env file!"
     exit 1
 fi
+
+echo "API Key found. Starting the Data Cleaning OpenEnv baseline evaluation..."
 
 echo "=========================================="
 echo "🚀 STARTING FULL 5-DATASET HACKATHON RUN"
@@ -12,13 +22,20 @@ echo "=========================================="
 
 export MOCK=false
 
+# 3. Loop through tasks 1 to 5 sequentially
 for idx in {1..5}
 do
-    export TASK_ID="task_${idx}"
+    CURRENT_TASK="task_${idx}"
     echo ""
-    echo "▶️ RUNNING: $TASK_ID"
+    echo "▶️ RUNNING: $CURRENT_TASK"
     echo "------------------------------------------"
-    python inference.py
+    
+    # Pass the TASK_ID purely for this Python execution
+    TASK_ID=$CURRENT_TASK python3 inference.py
+    
+    if [ $? -ne 0 ]; then
+        echo "⚠️ WARNING: $CURRENT_TASK encountered an error, but continuing to the next task..."
+    fi
 done
 
 echo ""
