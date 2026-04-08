@@ -8,3 +8,4 @@ fireducks
 uvicorn
 fastapi
 pydantic
+python-dotenv

@@ -108,7 +108,7 @@ async def main():
     if not MOCK_MODE and HF_TOKEN:
         client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-    env = DataCurationEnvClient(base_url="http://localhost:8000")
+    env = DataCurationEnvClient(base_url="http://localhost:7860")
     env_started = False
     rewards: List[float] = []
     steps_taken = 0
