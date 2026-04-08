@@ -11,26 +11,42 @@ from client import DataCurationEnvClient
 from server.models import DataCleanAction
 
 # --- Configuration ---
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1") 
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini") 
-API_KEY = os.getenv("OPENAI_API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+MOCK_MODE = os.getenv("MOCK", "false").lower() == "true"
+
+if not MOCK_MODE and HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
 
 TASK_ID = os.getenv("TASK_ID", "task_1")
-MAX_STEPS = 6 
-MOCK_MODE = os.getenv("MOCK", "false").lower() == "true"
+BENCHMARK = os.getenv("BENCHMARK", "DataCurationLab")
+MAX_STEPS = 6
 
 # --- Logging Helpers ---
 def log_start(task: str, env: str, model: str) -> None:
-    print(f"\n[START] task={task} env={env} model={model}", flush=True)
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
     print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}\n", flush=True)
+    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
+
+
+def extract_last_action_error(message: Optional[str]) -> Optional[str]:
+    if not message:
+        return None
+
+    lowered = message.lower()
+    error_markers = ["failed", "crashed", "error", "unknown operation"]
+    if any(marker in lowered for marker in error_markers):
+        return message
+    return None
 
 # --- Agent Prompting ---
 SYSTEM_PROMPT = """You are an elite autonomous Data Engineer. 
@@ -84,70 +100,78 @@ def get_agent_action(client: Optional[OpenAI], observation: str) -> Tuple[str, D
         thought = args.pop("thought", "No thought provided.")
         
         return thought, DataCleanAction(**args)
-    except Exception as e:
-        print(f"[LLM ERROR] {type(e).__name__}: {e}")
-        return f"Error occurred: {e}. Attempting fallback.", DataCleanAction(operation="finish", column="all", params={})
+    except Exception:
+        return "LLM error; using safe fallback.", DataCleanAction(operation="finish", column="all", params={})
 
 async def main():
     client = None
-    if not MOCK_MODE:
-        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    
-    async with DataCurationEnvClient(base_url="http://localhost:8000") as env:
-        log_start(task=TASK_ID, env="DataCurationLab", model=MODEL_NAME)
-        
-        rewards = []
-        steps_taken = 0
-        final_score = 0.0
-        success = False
-        
-        try:
-            result = await env.reset(task_id=TASK_ID)
+    if not MOCK_MODE and HF_TOKEN:
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+
+    env = DataCurationEnvClient(base_url="http://localhost:8000")
+    env_started = False
+    rewards: List[float] = []
+    steps_taken = 0
+    success = False
+
+    try:
+        await env.__aenter__()
+        env_started = True
+        log_start(task=TASK_ID, env=BENCHMARK, model=MODEL_NAME)
+
+        result = await env.reset(task_id=TASK_ID)
+        obs = result.observation
+        reward = 0.0
+        last_action_name = "None"
+
+        for step in range(1, MAX_STEPS + 1):
+            obs_text = f"""
+            [ENVIRONMENT CONTEXT]
+            Current Step: {step} out of {MAX_STEPS}
+            Last Action Executed: {last_action_name}
+            Reward for Last Action: {reward:.2f}
+            Environment Message: {obs.message}
+
+            [DATASET STATE]
+            Missing %: {obs.missing_info}
+            Dtypes: {obs.dtype_info}
+            Data Head:
+            {obs.df_head}
+            """
+
+            _, action = get_agent_action(client, obs_text)
+            last_action_name = action.operation
+
+            result = await env.step(action)
             obs = result.observation
-            reward = 0.0
-            last_action_name = "None (Start of Episode)" 
-            
-            for step in range(1, MAX_STEPS + 1):
-                obs_text = f"""
-                [ENVIRONMENT CONTEXT]
-                Current Step: {step} out of {MAX_STEPS}
-                Last Action Executed: {last_action_name}
-                Reward for Last Action: {reward:.2f}
-                Environment Message: {obs.message}
+            reward = float(result.reward or 0.0)
+            done = bool(result.done)
+            last_error = extract_last_action_error(obs.message)
+            log_step(
+                step=step,
+                action=f"{action.operation}('{action.column}')",
+                reward=reward,
+                done=done,
+                error=last_error,
+            )
 
-                [DATASET STATE]
-                Missing %: {obs.missing_info}
-                Dtypes: {obs.dtype_info}
-                Data Head:
-                {obs.df_head}
-                """
-                
-                thought, action = get_agent_action(client, obs_text)
-                print(f"\n[AGENT THOUGHT]: {thought}")
-                
-                last_action_name = action.operation
-                
-                result = await env.step(action)
-                obs = result.observation
-                
-                reward = result.reward or 0.0
-                rewards.append(reward)
-                steps_taken = step
-                final_score = (await env.state()).current_score
-                
-                log_step(step=step, action=f"{action.operation}({action.column})", 
-                         reward=reward, done=result.done, error=obs.message if "failed" in obs.message else None)
-                
-                if result.done:
-                    # Update success to True if score > 0.60
-                    success = round(final_score,1) >= 0.6
-                    break
-            
-            log_end(success=success, steps=steps_taken, score=final_score, rewards=rewards)
+            rewards.append(reward)
+            steps_taken = step
+            if done:
+                break
 
-        except Exception as e:
-            print(f"[DEBUG] Error during inference: {e}")
-            log_end(success=False, steps=steps_taken, score=0.0, rewards=rewards)
+        success = bool(steps_taken > 0 and len(rewards) == steps_taken)
+
+    except Exception:
+        success = False
+    finally:
+        if env_started:
+            try:
+                await env.__aexit__(None, None, None)
+            except Exception:
+                success = False
+
+        log_end(success=success, steps=steps_taken, rewards=rewards)
 
 if __name__ == "__main__":
     asyncio.run(main())

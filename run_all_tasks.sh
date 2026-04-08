@@ -9,8 +9,8 @@ if [ -f .env ]; then
 fi
 
 # 2. Ensure your key is set
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo "ERROR: Please export your OPENAI_API_KEY first or add it to your .env file!"
+if [ -z "$HF_TOKEN" ]; then
+    echo "ERROR: Please export your HF_TOKEN first or add it to your .env file!"
     exit 1
 fi
 

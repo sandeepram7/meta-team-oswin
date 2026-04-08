@@ -40,11 +40,12 @@ def drop_useless_columns(df: pd.DataFrame, threshold: float = 50.0) -> pd.DataFr
 def _llm_clean_categories(unique_vals: List[str]) -> Dict[str, str]:
     try:
         from openai import OpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_base_url = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+        api_key = os.getenv("HF_TOKEN")
         model_name = os.getenv("MODEL_NAME", "gpt-4o-mini")
         
         if not api_key: return {}
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(base_url=api_base_url, api_key=api_key)
         
         system_prompt = """You are a strict data cleaning assistant. 
         I will give you a list of unique categorical values. Identify duplicates caused by typos, whitespace, casing, or delimiters.

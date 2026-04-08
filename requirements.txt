@@ -1,4 +1,5 @@
 openenv-core
+openai
 pandas
 numpy
 scikit-learn

@@ -7,4 +7,5 @@ __pycache__/
 .gemini/
 meta_venv/
 venv_linux/
+myenv/
 *.txt
