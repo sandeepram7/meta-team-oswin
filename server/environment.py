@@ -148,7 +148,14 @@ class DataCurationEnv(Environment):
         
         done = self._state.step_count >= self.MAX_STEPS or self._current_score > 0.95 or op == "finish"
         
+        # CRITICAL: When the episode ends, report the cumulative quality score
+        # as the final reward. The platform uses this as the "task score" and
+        # requires it to be strictly between 0 and 1 (not 0.0, not 1.0).
+        if done:
+            reward = self._current_score
+        
         return self._get_obs(feedback, reward=reward, done=done)
+
 
     @property
     def state(self) -> DataCleanState:
@@ -170,7 +177,7 @@ class DataCurationEnv(Environment):
     def _calculate_quality_score(self) -> float:
         try:
             if self._df.empty or "target" not in self._df.columns:
-                return 0.0
+                return 0.01
             
             X = self._df.drop(columns=["target"])
             y = self._df["target"]
@@ -180,7 +187,7 @@ class DataCurationEnv(Environment):
             y_final = y[mask].copy()
             
             if len(y_final) < 10 or X_final.empty:
-                return 0.0 
+                return 0.01 
             
             if y_final.dtype == 'object' or str(y_final.dtype) == 'category':
                 is_regression = False
@@ -210,19 +217,19 @@ class DataCurationEnv(Environment):
                     ('classifier', DecisionTreeRegressor(max_depth=5, random_state=42))
                 ])
                 scores = cross_val_score(clf, X_final, y_final, cv=3, scoring='r2')
-                final_score = max(0.001, min(float(np.mean(scores)), 1.0))
+                final_score = max(0.01, min(float(np.mean(scores)), 0.99))
             else:
                 clf = Pipeline(steps=[
                     ('preprocessor', preprocessor),
                     ('classifier', DecisionTreeClassifier(max_depth=5, random_state=42))
                 ])
                 scores = cross_val_score(clf, X_final, y_final, cv=3, scoring='f1_macro')
-                final_score = max(0.001, min(float(np.mean(scores)), 1.0))
+                final_score = max(0.01, min(float(np.mean(scores)), 0.99))
             
             return final_score
 
         except Exception as e:
-            return 0.0
+            return 0.01
 
     def _generate_mock_data(self, task_id: str) -> pd.DataFrame:
         np.random.seed(42)

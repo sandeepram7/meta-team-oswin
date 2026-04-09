@@ -1,8 +1,15 @@
-version: "1.0"
+spec_version: 1
+name: data_curation_lab
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+
 environment:
   name: "DataCurationLab"
   description: "Advanced RL environment for multi-step data cleaning, featuring an Auto-Revert system and 6-stage pipeline."
   entrypoint: "server.environment:DataCurationEnv"
+
 tasks:
   - id: "task_1"
     description: "Breast Cancer: Simple numeric imputation with MCAR noise."

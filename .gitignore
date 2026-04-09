@@ -9,3 +9,5 @@ meta_venv/
 venv_linux/
 myenv/
 *.txt
+
+.env

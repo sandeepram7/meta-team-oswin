@@ -1,0 +1,10 @@
+[project]
+name = "data-curation-lab"
+version = "0.1.0"
+dependencies = [
+    "openenv-core", "openai", "pandas", "numpy", "scikit-learn",
+    "tabulate", "fireducks", "uvicorn", "fastapi", "pydantic", "python-dotenv"
+]
+
+[project.scripts]
+server = "server.app:main"
