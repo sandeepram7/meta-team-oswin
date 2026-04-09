@@ -148,6 +148,7 @@ async def main():
     steps_taken = 0
     success = False
 
+    crashed = False
     try:
         await env.__aenter__()
         env_started = True
@@ -198,6 +199,7 @@ async def main():
 
     except Exception:
         success = False
+        crashed = True
     finally:
         if env_started:
             try:
@@ -205,7 +207,7 @@ async def main():
             except Exception:
                 success = False
 
-        log_end(success=success, steps=steps_taken, rewards=rewards)
+        log_end(success=success and not crashed, steps=steps_taken, rewards=rewards)
 
 if __name__ == "__main__":
     asyncio.run(main())
