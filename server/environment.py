@@ -18,6 +18,16 @@ from openenv.core.env_server import Environment
 from .models import DataCleanAction, DataCleanObservation, DataCleanState
 from . import preprocessing
 
+class DataCurationGrader:
+    """Standalone Grader class for Phase 2 Evaluation."""
+    def grade(self, state: DataCleanState) -> float:
+        try:
+            score = float(getattr(state, "current_score", 0.01))
+            return max(0.01, min(score, 0.99))
+        except Exception:
+            return 0.01
+
+
 class DataCurationEnv(Environment):
     """
     OpenEnv Environment for Data Curation (Cleaning and Preprocessing).
