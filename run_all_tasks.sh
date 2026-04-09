@@ -26,19 +26,19 @@ export MOCK=false
 for idx in {1..5}
 do
     CURRENT_TASK="task_${idx}"
-    echo ""
-    echo "▶️ RUNNING: $CURRENT_TASK"
-    echo "------------------------------------------"
+    # echo ""
+    # echo "▶️ RUNNING: $CURRENT_TASK"
+    # echo "------------------------------------------"
     
     # Pass the TASK_ID purely for this Python execution
     TASK_ID=$CURRENT_TASK python3 inference.py
     
     if [ $? -ne 0 ]; then
-        echo "⚠️ WARNING: $CURRENT_TASK encountered an error, but continuing to the next task..."
+       # echo "⚠️ WARNING: $CURRENT_TASK encountered an error, but continuing to the next task..."
     fi
 done
 
-echo ""
-echo "=========================================="
-echo "✅ FULL RUN COMPLETE."
-echo "=========================================="
+# echo ""
+# echo "=========================================="
+# echo "✅ FULL RUN COMPLETE."
+# echo "=========================================="
