@@ -3,8 +3,17 @@ name = "data-curation-lab"
 version = "0.1.0"
 dependencies = [
     "openenv-core", "openai", "pandas", "numpy", "scikit-learn",
-    "tabulate", "fireducks", "uvicorn", "fastapi", "pydantic", "python-dotenv"
+    "tabulate", "fireducks", "uvicorn", "fastapi", "pydantic", "python-dotenv",
+    "setuptools>=61"
 ]
 
 [project.scripts]
 server = "server.app:main"
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*"]

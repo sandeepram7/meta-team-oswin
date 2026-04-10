@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the entire project
 COPY . .
 
+# Install the local package so 'server' is importable globally
+RUN pip install -e .
+
 # Hugging Face Spaces use port 7860
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
