@@ -23,6 +23,9 @@ class DataCurationGrader:
     def grade(self, state: DataCleanState) -> float:
         try:
             score = float(getattr(state, "current_score", 0.01))
+            # Guard against NaN/Inf that bypasses exception handling
+            if np.isnan(score) or np.isinf(score):
+                return 0.01
             return max(0.01, min(score, 0.99))
         except Exception:
             return 0.01
@@ -227,14 +230,22 @@ class DataCurationEnv(Environment):
                     ('classifier', DecisionTreeRegressor(max_depth=5, random_state=42))
                 ])
                 scores = cross_val_score(clf, X_final, y_final, cv=3, scoring='r2')
-                final_score = max(0.01, min(float(np.mean(scores)), 0.99))
+                mean_score = float(np.nanmean(scores))
+                if np.isnan(mean_score) or np.isinf(mean_score):
+                    final_score = 0.01
+                else:
+                    final_score = max(0.01, min(mean_score, 0.99))
             else:
                 clf = Pipeline(steps=[
                     ('preprocessor', preprocessor),
                     ('classifier', DecisionTreeClassifier(max_depth=5, random_state=42))
                 ])
                 scores = cross_val_score(clf, X_final, y_final, cv=3, scoring='f1_macro')
-                final_score = max(0.01, min(float(np.mean(scores)), 0.99))
+                mean_score = float(np.nanmean(scores))
+                if np.isnan(mean_score) or np.isinf(mean_score):
+                    final_score = 0.01
+                else:
+                    final_score = max(0.01, min(mean_score, 0.99))
             
             return final_score
 
