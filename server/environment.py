@@ -53,8 +53,13 @@ class DataCurationEnv(Environment):
         self._miss_dict = {}
 
     def reset(self, seed=None, episode_id=None, **kwargs) -> DataCleanObservation:
-        task_id = kwargs.get("task_id", "task_1")
-        data_path = f"data/{task_id}_sampled.csv"
+        task_id = kwargs.get("task_id", "easy")
+        
+        # Map easy/medium/hard to internal task_1/2/3 numbering
+        mapping = {"easy": "task_1", "medium": "task_2", "hard": "task_3"}
+        internal_id = mapping.get(task_id, task_id)
+        
+        data_path = f"data/{internal_id}_sampled.csv"
         
         if os.path.exists(data_path):
             self._df = pd.read_csv(data_path)
@@ -167,7 +172,11 @@ class DataCurationEnv(Environment):
         if done:
             reward = self._current_score
         
-        return self._get_obs(feedback, reward=reward, done=done)
+        # FINAL SAFETY CLAMP: Team Meta forbids exact 0.00 or 1.00
+        # This ensures all rewards in logs are strictly within (0, 1)
+        safe_reward = max(0.01, min(0.99, float(reward)))
+        
+        return self._get_obs(feedback, reward=safe_reward, done=done)
 
 
     @property

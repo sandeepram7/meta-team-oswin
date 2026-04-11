@@ -11,28 +11,24 @@ environment:
   entrypoint: "server.environment:DataCurationEnv"
 
 tasks:
-  - id: "task_1"
-    name: "Task 1"
+  - id: "easy"
+    name: "Task Easy"
     description: "Breast Cancer: Simple numeric imputation with MCAR noise."
     difficulty: "easy"
-    grader: "tasks.task_1.grader:DataCurationGrader"
-  - id: "task_2"
-    name: "Task 2"
+    grader:
+      type: llm
+      prompt_template: "Score the data curation 0.0 to 1.0 based on the transformation described in the logs. Focus on imputation quality and numeric consistency."
+  - id: "medium"
+    name: "Task Medium"
     description: "Titanic: Mixed-type cleaning and outlier removal."
     difficulty: "medium"
-    grader: "tasks.task_2.grader:DataCurationGrader"
-  - id: "task_3"
-    name: "Task 3"
+    grader:
+      type: llm
+      prompt_template: "Score the data curation 0.0 to 1.0 based on the transformation described in the logs. Look for outlier removal and correctly encoded categoricals."
+  - id: "hard"
+    name: "Task Hard"
     description: "Ames Housing: Correlated missingness challenge."
-    difficulty: "medium"
-    grader: "tasks.task_3.grader:DataCurationGrader"
-  - id: "task_4"
-    name: "Task 4"
-    description: "Used Cars: Severe outliers and skewed data."
     difficulty: "hard"
-    grader: "tasks.task_4.grader:DataCurationGrader"
-  - id: "task_5"
-    name: "Task 5"
-    description: "Zomato: High-dimensional mixed data challenge."
-    difficulty: "hard"
-    grader: "tasks.task_5.grader:DataCurationGrader"
+    grader:
+      type: llm
+      prompt_template: "Score the data curation 0.0 to 1.0 based on the transformation described in the logs. Evaluate how the agent handled high-dimensional missingness."

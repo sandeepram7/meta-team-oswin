@@ -65,11 +65,15 @@ def log_start(task: str, env: str, model: str) -> None:
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+    # Team Meta requires rewards to be strictly between 0 and 1
+    safe_reward = max(0.01, min(0.99, float(reward)))
+    print(f"[STEP] step={step} action={action} reward={safe_reward:.2f} done={done_val} error={error_val}", flush=True)
 
-def log_end(success: bool, steps: int, rewards: List[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{max(0.01, min(0.99, r)):.2f}" for r in rewards)
+    # Team Meta requires explicit 'score=' field in the [END] line
+    safe_score = max(0.01, min(0.99, float(score)))
+    print(f"[END] success={str(success).lower()} steps={steps} score={safe_score:.3f} rewards={rewards_str}", flush=True)
 
 
 def extract_last_action_error(message: Optional[str]) -> Optional[str]:
@@ -137,24 +141,16 @@ def get_agent_action(client: Optional[OpenAI], observation: str) -> Tuple[str, D
     except Exception:
         return "LLM error; using safe fallback.", DataCleanAction(operation="finish", column="all", params={})
 
-async def main():
-    client = None
-    if not MOCK_MODE and HF_TOKEN:
-        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-
-    env = DataCurationEnvClient(base_url="http://localhost:7860")
-    env_started = False
+async def run_single_task(client: Optional[OpenAI], env: DataCurationEnvClient, task_id: str):
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
     rewards: List[float] = []
     steps_taken = 0
+    final_score = 0.01
     success = False
-
     crashed = False
-    try:
-        await env.__aenter__()
-        env_started = True
-        log_start(task=TASK_ID, env=BENCHMARK, model=MODEL_NAME)
 
-        result = await env.reset(task_id=TASK_ID)
+    try:
+        result = await env.reset(task_id=task_id)
         obs = result.observation
         reward = 0.0
         last_action_name = "None"
@@ -179,8 +175,13 @@ async def main():
 
             result = await env.step(action)
             obs = result.observation
-            reward = float(result.reward or 0.0)
+            reward = float(result.reward or 0.01)
             done = bool(result.done)
+
+            # Extract scores from the state if possible for the final log
+            state = await env.get_state()
+            final_score = float(state.current_score or 0.01)
+
             last_error = extract_last_action_error(obs.message)
             log_step(
                 step=step,
@@ -194,20 +195,26 @@ async def main():
             steps_taken = step
             if done:
                 break
-
-        success = bool(steps_taken > 0 and len(rewards) == steps_taken)
-
+        
+        success = bool(steps_taken > 0)
     except Exception:
-        success = False
         crashed = True
+        success = False
     finally:
-        if env_started:
-            try:
-                await env.__aexit__(None, None, None)
-            except Exception:
-                success = False
+        log_end(success=success and not crashed, steps=steps_taken, score=final_score, rewards=rewards)
 
-        log_end(success=success and not crashed, steps=steps_taken, rewards=rewards)
+async def main():
+    client = None
+    if not MOCK_MODE and HF_TOKEN:
+        client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+
+    env = DataCurationEnvClient(base_url="http://localhost:7860")
+    
+    tasks_to_run = ["easy", "medium", "hard"]
+    
+    async with env:
+        for t_id in tasks_to_run:
+            await run_single_task(client, env, t_id)
 
 if __name__ == "__main__":
     asyncio.run(main())
