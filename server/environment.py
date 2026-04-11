@@ -55,8 +55,11 @@ class DataCurationEnv(Environment):
     def reset(self, seed=None, episode_id=None, **kwargs) -> DataCleanObservation:
         task_id = kwargs.get("task_id", "easy")
         
-        # Map easy/medium/hard to internal task_1/2/3 numbering
-        mapping = {"easy": "task_1", "medium": "task_2", "hard": "task_3"}
+        # Map easy/medium/hard or task_n to internal task_1/2/3/4/5 numbering
+        mapping = {
+            "easy": "task_1", "medium": "task_2", "hard": "task_3",
+            "task_4": "task_4", "task_5": "task_5"
+        }
         internal_id = mapping.get(task_id, task_id)
         
         data_path = f"data/{internal_id}_sampled.csv"

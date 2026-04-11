@@ -32,3 +32,17 @@ tasks:
     grader:
       type: llm
       prompt_template: "Score the data curation 0.0 to 1.0 based on the transformation described in the logs. Evaluate how the agent handled high-dimensional missingness."
+  - id: "task_4"
+    name: "Task Harder"
+    description: "Used Cars: Severe outliers and skewed data."
+    difficulty: "hard"
+    grader:
+      type: llm
+      prompt_template: "Score the data curation 0.0 to 1.0 based on the transformation described in the logs. Focus on the effectiveness of outlier handling and skew reduction."
+  - id: "task_5"
+    name: "Task Expert"
+    description: "Zomato: High-dimensional mixed data challenge."
+    difficulty: "hard"
+    grader:
+      type: llm
+      prompt_template: "Score the data curation 0.0 to 1.0 based on the transformation described in the logs. Evaluate the strategy for handling extremely high-dimensional categorical data."

@@ -210,7 +210,7 @@ async def main():
 
     env = DataCurationEnvClient(base_url="http://localhost:7860")
     
-    tasks_to_run = ["easy", "medium", "hard"]
+    tasks_to_run = ["easy", "medium", "hard", "task_4", "task_5"]
     
     async with env:
         for t_id in tasks_to_run:
