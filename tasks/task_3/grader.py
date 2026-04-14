@@ -1,20 +1,30 @@
+"""
+Evaluation grader for the Meta Data Curation Lab benchmarks.
+"""
+
 import numpy as np
 
+
 class DataCurationGrader:
-    """Standalone Grader class for Phase 2 Evaluation.
-    Isolated per task to ensure absolute discovery reliability."""
-    
+    """
+    Evaluation logic for the Data Curation Lab benchmarks.
+    This class is discoverable by the OpenEnv benchmark suite for Phase 2 evaluation.
+    Each task maintains a standalone grader to ensure robust discovery.
+    """
+
     def grade(self, state) -> float:
+        """
+        Retrieves the final model quality score from the session state.
+        Ensures the returned reward is bounded within (0.01, 0.99) as per platform requirements.
+        """
         try:
-            # Safely extract score using getattr
             score = float(getattr(state, "current_score", 0.01))
-            
-            # Use numpy to check for non-finite values
+
             if not np.isfinite(score):
                 return 0.01
-                
-            # Clamp correctly within (0, 1)
+
             return max(0.01, min(score, 0.99))
-            
+
         except Exception:
             return 0.01
+
